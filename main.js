@@ -1,11 +1,10 @@
-<!-- ==================== JAVASCRIPT ==================== -->
-
+<script>
 // ============================================================
 // CONFIGURATION — Update these values before deploying
 // ============================================================
 const CONFIG = {
   // Step 1: Deploy apps-script.gs and paste the Web App URL here
-  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbytayVJ89f_8Zhmb3-3LaPuN-8YRJ9uGEbUxS2Ss6-Ib67oPiFUWl0jN6tcLQG3yVdd/exec',
+  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbx0CVL1wvKGMX_geky20KXw1oBgc8nCtRK82H9kUC4c3Dolw6ibdS8Q3vd5xe_C4vai/exec',
 
   // Step 2: Your UPI ID (e.g., 9676610537@ybl or yourname@oksbi)
   UPI_ID: 'YOUR_UPI_ID@bank',
@@ -70,7 +69,7 @@ document.querySelectorAll('.nav-links a').forEach(a=>{
 // ============================================================
 (function setMinDates(){
   const t = today();
-  ['avCheckIn','avCheckOut','bkCheckIn','bkCheckOut'].forEach(id=>{
+  ['avCheckIn','avCheckOut','bkCheckIn','bkCheckOut','wkCheckIn','wkCheckOut'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.min = t;
   });
@@ -99,10 +98,11 @@ async function checkAvailability(e){
     if(data.success){
       if(data.available){
         result.className = 'avail-result yes';
-        result.innerHTML = '✅ Rooms Available! <br><small style="font-weight:400">Click <a href="#booking" style="color:inherit;text-decoration:underline">Book Now</a> to reserve.</small>';
+        const nights = Math.ceil((new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24));
+        result.innerHTML = `✅ <strong>${esc(roomType)} Room Available!</strong> <br><small style="font-weight:400">${checkIn} to ${checkOut} (${nights} night${nights>1?'s':''}) — Click <a href="#booking" style="color:inherit;text-decoration:underline">Book Now</a> to reserve.</small>`;
       } else {
         result.className = 'avail-result no';
-        result.innerHTML = '❌ No rooms available for the selected dates.<br><small style="font-weight:400">Try different dates or room type.</small>';
+        result.innerHTML = `❌ <strong>${esc(roomType)} Room Not Available</strong><br><small style="font-weight:400">For ${checkIn} to ${checkOut}. Try different dates or room type.</small>`;
       }
     } else {
       result.className = 'avail-result no';
@@ -112,6 +112,7 @@ async function checkAvailability(e){
     result.className = 'avail-result no';
     result.textContent = 'Could not connect to server. Please try again.';
   }
+  result.style.display = 'block';
   btn.innerHTML = 'Check Availability';
   btn.disabled = false;
   return false;
@@ -512,6 +513,8 @@ async function deleteBooking(bookingId){
 // ============================================================
 // DASHBOARD — ROOMS LIST
 // ============================================================
+let allRooms = [];
+
 async function loadRooms(){
   const token = sessionStorage.getItem('token');
   if(!token) return;
@@ -520,19 +523,108 @@ async function loadRooms(){
   try {
     const data = await apiPost({ action:'getRooms', token });
     if(data.success){
-      const rooms = data.rooms || [];
-      c.innerHTML = '<div class="room-grid">' + rooms.map(r=>`
-        <div class="room-tile">
+      allRooms = data.rooms || [];
+      c.innerHTML = '<div class="room-grid">' + allRooms.map(r=>`
+        <div class="room-tile" data-room-id="${r.roomNumber}">
           <h4>Room ${esc(r.roomNumber)}</h4>
           <p>${esc(r.roomType)}</p>
           <p style="color:var(--gold-d);font-weight:700;font-family:'Inter',sans-serif">₹${r.price}/night</p>
           <p>Max ${r.maxGuests} guests</p>
-          <p style="color:${r.active?'var(--green)':'var(--red)'};font-weight:600;font-size:.8rem">${r.active?'Active':'Inactive'}</p>
+          <button class="room-toggle-btn ${r.active?'active':'inactive'}" onclick="toggleRoom('${r.roomNumber}', this)">
+            ${r.active?'✓ Active':'✗ Inactive'}
+          </button>
         </div>`).join('') + '</div>';
+      updateToggleAllButton();
     }
   } catch(err){
     c.innerHTML = '<p style="color:var(--red)">Failed to load rooms</p>';
   }
+}
+
+async function toggleRoom(roomNumber, btn){
+  const token = sessionStorage.getItem('token');
+  if(!token) return;
+  const isCurrentlyActive = btn.classList.contains('active');
+  const newStatus = !isCurrentlyActive;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner dark"></span>';
+  
+  try {
+    const data = await apiPost({ 
+      action:'updateRoomStatus', 
+      token, 
+      roomNumber,
+      active: newStatus 
+    });
+    if(data.success){
+      btn.classList.remove('active', 'inactive');
+      btn.classList.add(newStatus ? 'active' : 'inactive');
+      btn.innerHTML = newStatus ? '✓ Active' : '✗ Inactive';
+      
+      // Update allRooms array
+      const room = allRooms.find(r => r.roomNumber === roomNumber);
+      if(room) room.active = newStatus;
+      
+      updateToggleAllButton();
+      logAction('edit', `Room ${roomNumber} status changed to ${newStatus ? 'Active' : 'Inactive'}`);
+    } else {
+      alert(data.error || 'Failed to update room status');
+      btn.innerHTML = isCurrentlyActive ? '✓ Active' : '✗ Inactive';
+    }
+  } catch(err){
+    alert('Error updating room status');
+    btn.innerHTML = isCurrentlyActive ? '✓ Active' : '✗ Inactive';
+  }
+  btn.disabled = false;
+}
+
+function updateToggleAllButton(){
+  const toggleBtn = document.getElementById('toggleAllRoomsBtn');
+  if(!toggleBtn) return;
+  const allActive = allRooms.every(r => r.active);
+  const noneActive = allRooms.every(r => !r.active);
+  
+  if(allActive){
+    toggleBtn.textContent = 'Deactivate All';
+    toggleBtn.className = 'btn-gold';
+  } else if(noneActive){
+    toggleBtn.textContent = 'Activate All';
+    toggleBtn.className = 'btn-gold';
+  } else {
+    toggleBtn.textContent = 'Activate All';
+    toggleBtn.className = 'btn-gold';
+  }
+}
+
+async function toggleAllRooms(){
+  const token = sessionStorage.getItem('token');
+  if(!token) return;
+  const btn = document.getElementById('toggleAllRoomsBtn');
+  const allActive = allRooms.every(r => r.active);
+  const newStatus = !allActive; // If all are active, deactivate; otherwise activate
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Updating...';
+  
+  try {
+    const data = await apiPost({ 
+      action:'updateAllRoomsStatus', 
+      token, 
+      active: newStatus 
+    });
+    if(data.success){
+      // Update all room tiles
+      allRooms.forEach(r => r.active = newStatus);
+      await loadRooms();
+      logAction('edit', `All rooms ${newStatus ? 'activated' : 'deactivated'}`);
+    } else {
+      alert(data.error || 'Failed to update rooms');
+    }
+  } catch(err){
+    alert('Error updating rooms');
+  }
+  btn.disabled = false;
 }
 
 // Load rooms when tab is clicked
@@ -541,6 +633,7 @@ switchTab = function(panel, btn){
   origSwitch(panel, btn);
   if(panel === 'rooms') loadRooms();
   if(panel === 'offers') loadStaffOffers();
+  if(panel === 'walkin' && allRooms.length === 0) loadRooms();
 };
 
 // ============================================================
@@ -715,3 +808,471 @@ document.addEventListener('keydown', e=>{
 document.getElementById('loginPass').addEventListener('keydown', e=>{
   if(e.key === 'Enter') doLogin();
 });
+
+// ============================================================
+// ACTIVITY LOG — local session log
+// ============================================================
+let activityLog = [];
+
+function logAction(type, message){
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  const dateStr = now.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+  const staff = sessionStorage.getItem('staffName') || 'Staff';
+  activityLog.unshift({ type, message, time: timeStr + ', ' + dateStr, staff });
+  if(activityLog.length > 200) activityLog = activityLog.slice(0,200);
+}
+
+function renderActivityLog(){
+  const filter = (document.getElementById('alFilter')||{}).value || '';
+  const feed = document.getElementById('alFeed');
+  if(!feed) return;
+  const filtered = filter ? activityLog.filter(l=>l.type===filter) : activityLog;
+  if(filtered.length === 0){
+    feed.innerHTML = '<p style="text-align:center;padding:32px;color:var(--text-l)">No activity recorded yet.</p>';
+    return;
+  }
+  feed.innerHTML = filtered.map(l=>`
+    <div class="log-item">
+      <div class="log-dot ${esc(l.type)}"></div>
+      <div>
+        <div class="log-msg">${esc(l.message)}</div>
+        <div class="log-meta">${esc(l.staff)} &middot; ${esc(l.time)}</div>
+      </div>
+    </div>`).join('');
+}
+
+function clearActivityLog(){
+  if(!confirm('Clear activity log for this session?')) return;
+  activityLog = [];
+  renderActivityLog();
+}
+
+// ============================================================
+// OVERVIEW EXTRAS — today check-ins/check-outs widget
+// ============================================================
+function renderOverviewExtras(){
+  const t = today();
+  const ins  = allBookings.filter(b=>b.checkIn===t);
+  const outs = allBookings.filter(b=>b.checkOut===t);
+
+  // Ensure the split div exists (add once)
+  let split = document.getElementById('overviewSplit');
+  if(!split){
+    split = document.createElement('div');
+    split.id = 'overviewSplit';
+    split.className = 'overview-split';
+    const ovPanel = document.getElementById('panel-overview');
+    ovPanel.appendChild(split);
+  }
+
+  const makeList = (items, emptyMsg) => items.length
+    ? items.map(b=>`<div class="cio-item">
+        <div class="cio-name">${esc(b.guestName)}</div>
+        <div class="cio-detail">Room ${esc(b.roomNumber||'TBD')} &bull; ${esc(b.roomType)} &bull;
+          <span class="status-badge status-${esc(b.paymentStatus)}" style="font-size:.72rem">${esc(b.paymentStatus)}</span>
+          &nbsp;<button class="wa-btn" style="font-size:.72rem;padding:2px 8px" onclick="sendWA('${esc(b.phone)}','${esc(b.guestName)}','${esc(b.bookingId)}')">WhatsApp</button>
+        </div>
+      </div>`).join('')
+    : `<p style="color:var(--text-l);font-size:.85rem;padding:8px 0">${emptyMsg}</p>`;
+
+  split.innerHTML = `
+    <div class="checkinout-card">
+      <h4>&#9650; Checking In Today <span style="background:var(--green);color:#fff;font-family:Inter,sans-serif;font-size:.75rem;padding:2px 8px;border-radius:10px;font-weight:600">${ins.length}</span></h4>
+      ${makeList(ins,'No check-ins today')}
+    </div>
+    <div class="checkinout-card">
+      <h4>&#9660; Checking Out Today <span style="background:var(--orange);color:#fff;font-family:Inter,sans-serif;font-size:.75rem;padding:2px 8px;border-radius:10px;font-weight:600">${outs.length}</span></h4>
+      ${makeList(outs,'No check-outs today')}
+    </div>`;
+}
+
+// ============================================================
+// WALK-IN BOOKING
+// ============================================================
+function showWkRoomOptions(){
+  try {
+    const checkIn  = document.getElementById('wkCheckIn').value;
+    const checkOut = document.getElementById('wkCheckOut').value;
+    const strip    = document.getElementById('wkRoomStrip');
+    const result   = document.getElementById('wkAvailResult');
+    
+    // Validate dates
+    if(!checkIn || !checkOut){
+      alert('Please select both check-in and check-out dates');
+      return;
+    }
+    
+    if(checkIn >= checkOut){
+      alert('Check-out date must be after check-in date');
+      return;
+    }
+
+    // Show all room types
+    const roomTypes = ['Non-AC', 'AC', 'Suite'];
+    const prices = {'Non-AC':600, 'AC':1000, 'Suite':1500};
+    
+    strip.innerHTML = roomTypes.map(rt => {
+      return `<div class="walkin-room-btn" data-rt="${esc(rt)}"
+        onclick="selectWkRoom(this)">
+        ${esc(rt)}<br>
+        <span style="font-size:.78rem;font-weight:400">&#8377;${prices[rt]}/night</span><br>
+        <span style="font-size:.72rem">Click to select</span>
+      </div>`;
+    }).join('');
+
+    if(result){
+      result.className = 'avail-result yes';
+      result.innerHTML = '✅ Select a room type above.';
+      result.style.display = 'block';
+    }
+  } catch(e) {
+    console.error('showWkRoomOptions error:', e);
+    alert('Error loading rooms');
+  }
+}
+
+function selectWkRoom(el){
+  document.querySelectorAll('.walkin-room-btn').forEach(b=>b.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('wkRoomType').value = el.dataset.rt;
+}
+
+async function submitWalkin(e){
+  e.preventDefault();
+  const btn = document.getElementById('wkBtn');
+  const checkIn  = document.getElementById('wkCheckIn').value;
+  const checkOut = document.getElementById('wkCheckOut').value;
+  const roomType = document.getElementById('wkRoomType').value;
+
+  // Validate dates
+  if(!checkIn || !checkOut){
+    alert('Please select both check-in and check-out dates');
+    return false;
+  }
+
+  if(checkIn >= checkOut){
+    alert('Check-out must be after check-in');
+    return false;
+  }
+
+  if(!roomType){
+    alert('Please select a room type');
+    return false;
+  }
+
+  // Validate guest name
+  const guestName = document.getElementById('wkName').value.trim();
+  if(!guestName){
+    alert('Please enter guest name');
+    return false;
+  }
+
+  // Validate phone
+  const phone = document.getElementById('wkPhone').value.trim();
+  if(!phone){
+    alert('Please enter phone number');
+    return false;
+  }
+
+  btn.innerHTML = '<span class="spinner"></span> Booking...';
+  btn.disabled = true;
+
+  const payload = {
+    action: 'createBooking',
+    guestName: guestName,
+    phone: phone,
+    checkIn, 
+    checkOut, 
+    roomType,
+    numGuests: document.getElementById('wkGuests').value || 1,
+    notes: (document.getElementById('wkGovtId').value.trim()
+      ? 'GovtID: '+document.getElementById('wkGovtId').value.trim()+' | ' : '')
+      + document.getElementById('wkNotes').value.trim()
+  };
+
+  try {
+    const data = await apiPost(payload);
+    if(data.success){
+      logAction('create', 'Walk-in booking created: '+guestName+' ('+roomType+') '+checkIn+' → '+checkOut);
+      alert('Booking created! ID: ' + data.bookingId);
+      document.getElementById('walkinForm').reset();
+      document.getElementById('wkRoomStrip').innerHTML = '<div style="color:var(--text-l);font-size:.88rem;padding:8px 0">Select dates above to see available rooms</div>';
+      document.getElementById('wkRoomType').value = '';
+      document.getElementById('wkAvailResult').style.display = 'none';
+      loadDashboardData();
+      renderWalkinSidebar();
+    } else {
+      alert(data.error || 'Booking failed');
+    }
+  } catch(err){
+    alert('Connection error. Please try again.');
+  }
+  btn.innerHTML = 'Confirm Walk-in Booking';
+  btn.disabled = false;
+  return false;
+}
+
+function renderWalkinSidebar(){
+  const t = today();
+  const todayList = document.getElementById('wkTodayList');
+  const waList    = document.getElementById('wkWaList');
+  if(!todayList) return;
+
+  const todayBookings = allBookings.filter(b=>b.bookingDate===t || b.checkIn===t);
+  if(todayBookings.length===0){
+    todayList.innerHTML = '<p style="color:var(--text-l);font-size:.85rem">No bookings today yet.</p>';
+  } else {
+    todayList.innerHTML = todayBookings.slice(0,6).map(b=>`
+      <div class="cio-item">
+        <div class="cio-name">${esc(b.guestName)} &bull; ${esc(b.roomType)}</div>
+        <div class="cio-detail">${esc(b.bookingId)} &bull; <span class="status-badge status-${esc(b.paymentStatus)}" style="font-size:.7rem">${esc(b.paymentStatus)}</span></div>
+      </div>`).join('');
+  }
+
+  const recent5 = [...allBookings].reverse().slice(0,5);
+  waList.innerHTML = recent5.map(b=>`
+    <div class="cio-item" style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="cio-name" style="font-size:.85rem">${esc(b.guestName)}</div>
+        <div class="cio-detail">${esc(b.phone)}</div>
+      </div>
+      <button class="wa-btn" onclick="sendWA('${esc(b.phone)}','${esc(b.guestName)}','${esc(b.bookingId)}')">WhatsApp</button>
+    </div>`).join('');
+}
+
+function sendWA(phone, name, bookingId){
+  const clean = String(phone).replace(/[^0-9]/g,'');
+  const intl  = clean.startsWith('91') ? clean : '91'+clean;
+  const msg   = encodeURIComponent(
+    'Namaste '+name+', your booking at Sri Krishna Lodge Antarvedi is confirmed!\n'
+    +'Booking ID: '+bookingId+'\n'
+    +'For queries call: 096766 10537\n'
+    +'Thank you for choosing us!'
+  );
+  window.open('https://wa.me/'+intl+'?text='+msg,'_blank');
+  logAction('confirm','WhatsApp sent to '+name+' ('+phone+') for booking '+bookingId);
+}
+
+// ============================================================
+// REPORTS
+// ============================================================
+function getReportPeriodDays(){
+  const v = (document.getElementById('rpPeriod')||{}).value||'30';
+  return v==='all' ? 99999 : Number(v);
+}
+
+function renderReports(){
+  const days       = getReportPeriodDays();
+  const roomFilter = (document.getElementById('rpRoomFilter')||{}).value||'';
+  const cutoff     = new Date(); cutoff.setDate(cutoff.getDate()-days);
+  const cutStr     = cutoff.toISOString().split('T')[0];
+
+  const filtered = allBookings.filter(b=>{
+    if(roomFilter && b.roomType!==roomFilter) return false;
+    if(days < 99999 && b.bookingDate && b.bookingDate < cutStr) return false;
+    return true;
+  });
+
+  const confirmed   = filtered.filter(b=>b.paymentStatus==='Confirmed');
+  const pending     = filtered.filter(b=>b.paymentStatus==='Pending');
+  const cancelled   = filtered.filter(b=>b.paymentStatus==='Cancelled');
+  const totalRev    = confirmed.reduce((s,b)=>s+Number(b.amount||0),0);
+  const pendingRev  = pending.reduce((s,b)=>s+Number(b.amount||0),0);
+
+  // Stats strip
+  const statsEl = document.getElementById('rpStats');
+  if(statsEl) statsEl.innerHTML = `
+    <div class="report-stat"><div class="report-stat-num">${filtered.length}</div><div class="report-stat-lbl">Total Bookings</div></div>
+    <div class="report-stat"><div class="report-stat-num">${confirmed.length}</div><div class="report-stat-lbl">Confirmed</div></div>
+    <div class="report-stat"><div class="report-stat-num">${pending.length}</div><div class="report-stat-lbl">Pending</div></div>
+    <div class="report-stat"><div class="report-stat-num">${cancelled.length}</div><div class="report-stat-lbl">Cancelled</div></div>
+    <div class="report-stat" style="border-top-color:var(--green)"><div class="report-stat-num" style="color:var(--green)">&#8377;${totalRev.toLocaleString('en-IN')}</div><div class="report-stat-lbl">Revenue Collected</div></div>
+    <div class="report-stat" style="border-top-color:var(--orange)"><div class="report-stat-num" style="color:var(--orange)">&#8377;${pendingRev.toLocaleString('en-IN')}</div><div class="report-stat-lbl">Pending Amount</div></div>`;
+
+  // Bar chart — last 14 days
+  const barEl = document.getElementById('rpBarChart');
+  if(barEl){
+    const days14 = [];
+    for(let i=13;i>=0;i--){
+      const d = new Date(); d.setDate(d.getDate()-i);
+      days14.push(d.toISOString().split('T')[0]);
+    }
+    const counts = days14.map(d=>allBookings.filter(b=>b.checkIn===d).length);
+    const maxC   = Math.max(...counts,1);
+    barEl.innerHTML = days14.map((d,i)=>{
+      const label = d.slice(5); // MM-DD
+      const h = Math.round((counts[i]/maxC)*120);
+      return `<div class="bar-col">
+        <div class="bar-val">${counts[i]||''}</div>
+        <div class="bar-fill" style="height:${h}px"></div>
+        <div class="bar-lbl">${label}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Room type breakdown
+  const bdEl = document.getElementById('rpRoomBreakdown');
+  if(bdEl){
+    const rTypes = ['Non-AC','AC','Suite'];
+    const colors = {'Non-AC':'var(--navy)','AC':'var(--gold-d)','Suite':'#6366f1'};
+    bdEl.innerHTML = rTypes.map(rt=>{
+      const cnt = filtered.filter(b=>b.roomType===rt).length;
+      const rev = filtered.filter(b=>b.roomType===rt && b.paymentStatus==='Confirmed').reduce((s,b)=>s+Number(b.amount||0),0);
+      const pct = filtered.length ? Math.round(cnt/filtered.length*100) : 0;
+      return `<div style="background:var(--cream-d);border-radius:var(--r);padding:16px 20px;min-width:150px;border-left:4px solid ${colors[rt]}">
+        <div style="font-weight:700;font-size:1.1rem;color:var(--navy)">${esc(rt)}</div>
+        <div style="font-size:.85rem;color:var(--text-l);margin-top:4px">${cnt} bookings (${pct}%)</div>
+        <div style="font-weight:700;color:${colors[rt]};margin-top:4px;font-family:Inter,sans-serif">&#8377;${rev.toLocaleString('en-IN')}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function exportReportCSV(){
+  const rows = [['Booking ID','Guest','Phone','Room Type','Room No','Check-in','Check-out','Nights','Amount','Status','Booking Date','Notes']];
+  allBookings.forEach(b=>{
+    const nights = b.checkIn && b.checkOut
+      ? Math.max(1,Math.round((new Date(b.checkOut)-new Date(b.checkIn))/(86400000)))
+      : '';
+    rows.push([b.bookingId,b.guestName,b.phone,b.roomType,b.roomNumber||'TBD',b.checkIn,b.checkOut,nights,b.amount,b.paymentStatus,b.bookingDate,b.notes||'']);
+  });
+  downloadCSV(rows,'bookings-report-'+today()+'.csv');
+  logAction('edit','Exported bookings report CSV');
+}
+
+function downloadCSV(rows, filename){
+  const csv = rows.map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv],{type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+// ============================================================
+// GUEST REGISTER
+// ============================================================
+function filterGuestRegister(){
+  const search     = (document.getElementById('grSearch').value||'').toLowerCase();
+  const statusF    = document.getElementById('grStatusFilter').value;
+  const t          = today();
+
+  let filtered = allBookings.filter(b=>{
+    if(search){
+      const hay = (b.bookingId+b.guestName+b.phone+(b.notes||'')).toLowerCase();
+      if(!hay.includes(search)) return false;
+    }
+    if(statusF === 'checkedin')  return b.checkIn === t;
+    if(statusF === 'checkedout') return b.checkOut === t;
+    if(statusF === 'upcoming')   return b.checkIn > t;
+    return true;
+  });
+  filtered = [...filtered].reverse();
+
+  const tbody = document.getElementById('grTbody');
+  if(!tbody) return;
+  if(filtered.length===0){
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--text-l)">No records found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(b=>{
+    // Extract Govt ID from notes if saved there by walkin form
+    const notesStr  = b.notes||'';
+    let govtId = '';
+    const idMatch = notesStr.match(/GovtID:\s*([^|]+)/);
+    if(idMatch) govtId = idMatch[1].trim();
+
+    return `<tr>
+      <td><strong>${esc(b.bookingId)}</strong></td>
+      <td>${esc(b.guestName)}</td>
+      <td>${esc(b.phone)}</td>
+      <td>${govtId ? '<span class="id-badge">'+esc(govtId)+'</span>' : '<span style="color:var(--text-xl);font-size:.8rem">Not captured</span>'}</td>
+      <td>${esc(b.roomType)} ${b.roomNumber?'#'+esc(b.roomNumber):''}</td>
+      <td>${b.checkIn}</td>
+      <td>${b.checkOut}</td>
+      <td>${b.numGuests||1}</td>
+      <td><span class="status-badge status-${esc(b.paymentStatus)}">${esc(b.paymentStatus)}</span></td>
+      <td><button class="wa-btn" onclick="sendWA('${esc(b.phone)}','${esc(b.guestName)}','${esc(b.bookingId)}')">WhatsApp</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function exportGuestRegisterCSV(){
+  const rows = [['Booking ID','Guest Name','Phone','Govt ID','Room Type','Room No','Check-in','Check-out','Guests','Status']];
+  allBookings.forEach(b=>{
+    const notesStr = b.notes||'';
+    const idMatch  = notesStr.match(/GovtID:\s*([^|]+)/);
+    const govtId   = idMatch ? idMatch[1].trim() : '';
+    rows.push([b.bookingId,b.guestName,b.phone,govtId,b.roomType,b.roomNumber||'',b.checkIn,b.checkOut,b.numGuests||1,b.paymentStatus]);
+  });
+  downloadCSV(rows,'guest-register-'+today()+'.csv');
+  logAction('edit','Exported guest register CSV');
+}
+
+// ============================================================
+// PATCH existing functions to add logging + extras
+// ============================================================
+const _origLoadDashboard = loadDashboardData;
+loadDashboardData = async function(){
+  await _origLoadDashboard();
+  renderOverviewExtras();
+  renderWalkinSidebar();
+};
+
+const _origSwitchTab = switchTab;
+switchTab = function(panel, btn){
+  _origSwitchTab(panel, btn);
+  if(panel==='reports')        renderReports();
+  if(panel==='guestregister')  filterGuestRegister();
+  if(panel==='activitylog')    renderActivityLog();
+  if(panel==='walkin')         renderWalkinSidebar();
+};
+
+// Patch deleteBooking to log
+const _origDeleteBooking = deleteBooking;
+deleteBooking = async function(bookingId){
+  const b = allBookings.find(x=>x.bookingId===bookingId);
+  await _origDeleteBooking(bookingId);
+  if(b) logAction('delete','Deleted booking '+bookingId+' ('+b.guestName+')');
+};
+
+// Patch saveBookingEdit to log
+const _origSaveBkEdit = saveBookingEdit;
+saveBookingEdit = async function(e){
+  const bid = document.getElementById('edBookingId').value;
+  const newStatus = document.getElementById('edStatus').value;
+  const b = allBookings.find(x=>x.bookingId===bid);
+  const oldStatus = b ? b.paymentStatus : '';
+  await _origSaveBkEdit(e);
+  if(oldStatus && newStatus !== oldStatus){
+    logAction('confirm','Status changed: '+bid+' → '+newStatus);
+  } else {
+    logAction('edit','Edited booking '+bid);
+  }
+};
+
+// Log login
+const _origEnterDash = enterDashboard;
+enterDashboard = function(name){
+  _origEnterDash(name);
+  logAction('login', name+' logged in');
+};
+
+// Set today as default for walk-in form
+(function setWkDefaults(){
+  const t = today();
+  setTimeout(()=>{
+    const ci = document.getElementById('wkCheckIn');
+    const co = document.getElementById('wkCheckOut');
+    if(ci){ ci.value = t; ci.min = t; }
+    if(co){
+      const tmr = new Date(); tmr.setDate(tmr.getDate()+1);
+      co.value = tmr.toISOString().split('T')[0];
+      co.min = t;
+    }
+  }, 100);
+})();
+
+</script>
