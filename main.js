@@ -1,4 +1,3 @@
-<script>
 // ============================================================
 // CONFIGURATION — Update these values before deploying
 // ============================================================
@@ -1275,4 +1274,3 @@ enterDashboard = function(name){
   }, 100);
 })();
 
-</script>
