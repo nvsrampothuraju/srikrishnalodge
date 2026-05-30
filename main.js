@@ -64,6 +64,64 @@ document.querySelectorAll('.nav-links a').forEach(a=>{
 });
 
 // ============================================================
+// MODERN UI — Loader, Particles, Scroll Reveal, Navbar
+// ============================================================
+
+// Page Loader
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    const loader = document.getElementById('pageLoader');
+    if(loader) loader.classList.add('done');
+  }, 1500);
+});
+
+// Navbar scroll effect
+window.addEventListener('scroll', () => {
+  const nav = document.querySelector('.navbar');
+  if(nav) nav.classList.toggle('scrolled', window.scrollY > 60);
+}, { passive: true });
+
+// Hero Particles
+(function createParticles(){
+  const container = document.getElementById('heroParticles');
+  if(!container) return;
+  for(let i = 0; i < 18; i++){
+    const p = document.createElement('span');
+    p.className = 'particle';
+    p.style.cssText = `
+      left:${Math.random()*100}%;
+      width:${Math.random()*3+1}px;
+      height:${Math.random()*3+1}px;
+      animation-duration:${Math.random()*12+8}s;
+      animation-delay:${Math.random()*10}s;
+      opacity:${Math.random()*.5+.1}
+    `;
+    container.appendChild(p);
+  }
+})();
+
+// Scroll Reveal
+(function initReveal(){
+  const els = document.querySelectorAll('.section-title,.room-card,.form-card,.review-card,.contact-item,.faq-item,.gallery-grid img,.hero-stats');
+  if(!els.length) return;
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if(entry.isIntersecting){
+        entry.target.classList.add('visible');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+  els.forEach((el, i) => {
+    el.classList.add('reveal');
+    if(i % 3 === 1) el.classList.add('reveal-delay-1');
+    if(i % 3 === 2) el.classList.add('reveal-delay-2');
+    io.observe(el);
+  });
+})();
+
+// ============================================================
 // DATE DEFAULTS
 // ============================================================
 (function setMinDates(){
@@ -118,6 +176,24 @@ async function checkAvailability(e){
 }
 
 // ============================================================
+// ROOM TYPE RULES — Public Booking Validations Only
+// ============================================================
+const ROOM_RULES = {
+  'Non-AC': { minPerDay: 800, maxGuests: 2, label: 'Non-AC' },
+  'AC':     { minPerDay: 1000, maxGuests: 3, label: 'AC' },
+  'Suite':  { minPerDay: 1800, maxGuests: 6, label: 'Suite' }
+};
+
+function getStayDays(checkIn, checkOut) {
+  return Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / 86400000));
+}
+
+function getMinAmount(roomType, days) {
+  const rule = ROOM_RULES[roomType];
+  return rule ? rule.minPerDay * days : 0;
+}
+
+// ============================================================
 // BOOKING (PUBLIC)
 // ============================================================
 function scrollToBooking(roomType){
@@ -128,10 +204,34 @@ function scrollToBooking(roomType){
 async function submitBooking(e){
   e.preventDefault();
   const btn = document.getElementById('bkBtn');
-  const checkIn = document.getElementById('bkCheckIn').value;
+  const checkIn  = document.getElementById('bkCheckIn').value;
   const checkOut = document.getElementById('bkCheckOut').value;
+  const roomType = document.getElementById('bkRoomType').value;
+  const guestsVal = document.getElementById('bkGuests').value.trim();
+  const guestsEl  = document.getElementById('bkGuests');
+  const guestsErr = document.getElementById('bkGuestsError');
 
   if(checkIn >= checkOut){ alert('Check-out must be after check-in'); return false; }
+
+  // --- Guest validation (public side only) ---
+  guestsErr.style.display = 'none';
+  const rule = ROOM_RULES[roomType];
+  if(rule){
+    // Mandatory
+    if(!guestsVal || Number(guestsVal) < 1){
+      guestsErr.textContent = 'Number of Guests is required.';
+      guestsErr.style.display = 'block';
+      guestsEl.focus();
+      return false;
+    }
+    // Max guests
+    if(Number(guestsVal) > rule.maxGuests){
+      guestsErr.textContent = `Maximum ${rule.maxGuests} guest${rule.maxGuests>1?'s':''} are allowed for ${rule.label} rooms.`;
+      guestsErr.style.display = 'block';
+      guestsEl.focus();
+      return false;
+    }
+  }
 
   btn.innerHTML = '<span class="spinner"></span> Booking...';
   btn.disabled = true;
@@ -142,11 +242,12 @@ async function submitBooking(e){
       guestName: document.getElementById('bkName').value.trim(),
       phone: document.getElementById('bkPhone').value.trim(),
       checkIn, checkOut,
-      roomType: document.getElementById('bkRoomType').value,
-      numGuests: document.getElementById('bkGuests').value,
+      roomType,
+      numGuests: guestsVal,
       notes: document.getElementById('bkNotes').value.trim()
     });
     if(data.success){
+      data.roomType = roomType;
       showPaymentModal(data);
       document.getElementById('bookingForm').reset();
     } else {
@@ -161,25 +262,74 @@ async function submitBooking(e){
 }
 
 let currentBookingId = '';
+let currentMinAmount = 0;
+let currentRoomType  = '';
+let currentDays      = 1;
 
 function showPaymentModal(data){
   currentBookingId = data.bookingId || '';
-  document.getElementById('pmRef').textContent = 'Booking Ref: ' + data.bookingId;
-  document.getElementById('pmNights').textContent = data.nights + ' night' + (data.nights>1?'s':'');
-  // Reset to step 1
+  currentRoomType  = data.roomType  || '';
+  currentDays      = data.nights    || 1;
+  const rule       = ROOM_RULES[currentRoomType];
+  currentMinAmount = rule ? rule.minPerDay * currentDays : 0;
+
+  document.getElementById('pmRef').textContent    = 'Booking Ref: ' + data.bookingId;
+  document.getElementById('pmNights').textContent = currentDays + ' night' + (currentDays>1?'s':'');
+
+  // Auto-populate info box
+  const infoBox = document.getElementById('pmRoomAmountInfo');
+  if(rule && currentMinAmount > 0){
+    const perDay  = rule.minPerDay;
+    const minAmt  = currentMinAmount;
+    infoBox.innerHTML = `
+      <strong>🏨 ${currentRoomType} Room</strong><br>
+      <span style="color:var(--text-l)">Room charge: <strong>₹${perDay.toLocaleString('en-IN')} per day</strong></span><br>
+      <span style="color:var(--navy)">📅 ${currentDays} day${currentDays>1?'s':''} stay — Minimum payable: <strong style="color:var(--gold-d)">₹${minAmt.toLocaleString('en-IN')}</strong></span>`;
+  } else {
+    infoBox.innerHTML = `<span style="color:var(--text-l)">📞 For amount details, call <a href="tel:09676610537" style="color:var(--gold-d);font-weight:700">096766 10537</a></span>`;
+  }
+
+  // Auto-fill the amount field with minimum
+  const amountInput = document.getElementById('pmAmountInput');
+  amountInput.value = currentMinAmount > 0 ? currentMinAmount : '';
+  amountInput.min   = currentMinAmount > 0 ? currentMinAmount : 1;
+
+  // Reset error & steps
+  document.getElementById('pmAmountError').style.display = 'none';
   document.getElementById('pmStep1').style.display = 'block';
   document.getElementById('pmStep2').style.display = 'none';
-  document.getElementById('pmAmountInput').value = '';
   document.getElementById('paymentModal').classList.add('active');
   document.body.style.overflow = 'hidden';
 }
 
 function generatePaymentQR(){
-  const amount = document.getElementById('pmAmountInput').value;
-  if(!amount || Number(amount) <= 0){
-    alert('Please enter a valid amount');
+  const amount    = Number(document.getElementById('pmAmountInput').value);
+  const errorDiv  = document.getElementById('pmAmountError');
+  const rule      = ROOM_RULES[currentRoomType];
+
+  // Clear previous error
+  errorDiv.style.display = 'none';
+
+  if(!amount || amount <= 0){
+    errorDiv.textContent = 'Please enter a valid amount.';
+    errorDiv.style.display = 'block';
     return;
   }
+
+  // Minimum amount validation
+  if(rule && currentMinAmount > 0 && amount < currentMinAmount){
+    const perDay = rule.minPerDay;
+    const days   = currentDays;
+    if(days === 1){
+      errorDiv.textContent = `${currentRoomType} room charge is ₹${perDay.toLocaleString('en-IN')} per day. Minimum payable amount is ₹${currentMinAmount.toLocaleString('en-IN')}.`;
+    } else {
+      errorDiv.textContent = `${currentRoomType} room charge is ₹${perDay.toLocaleString('en-IN')} per day. Minimum payable amount is ₹${currentMinAmount.toLocaleString('en-IN')} for ${days} days.`;
+    }
+    errorDiv.style.display = 'block';
+    document.getElementById('pmAmountInput').focus();
+    return;
+  }
+
   // Build UPI deep link
   const upiUrl = 'upi://pay?pa=' + encodeURIComponent(CONFIG.UPI_ID)
     + '&pn=' + encodeURIComponent(CONFIG.UPI_NAME)
@@ -190,9 +340,9 @@ function generatePaymentQR(){
   // Generate QR using free API
   const qrApiUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(upiUrl);
 
-  document.getElementById('pmAmount').textContent = '₹' + amount;
-  document.getElementById('qrImage').src = qrApiUrl;
-  document.getElementById('pmUpiId').textContent = 'UPI ID: ' + CONFIG.UPI_ID;
+  document.getElementById('pmAmount').textContent = '₹' + amount.toLocaleString('en-IN');
+  document.getElementById('qrImage').src          = qrApiUrl;
+  document.getElementById('pmUpiId').textContent  = 'UPI ID: ' + CONFIG.UPI_ID;
 
   // Switch to step 2
   document.getElementById('pmStep1').style.display = 'none';
@@ -1273,4 +1423,3 @@ enterDashboard = function(name){
     }
   }, 100);
 })();
-
